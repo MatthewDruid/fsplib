@@ -1,0 +1,57 @@
+
+plugins {
+    id "java"
+    id "maven-publish"
+}
+
+group = "pl.com.witia.fsp"
+version = "0.1.0-SNAPSHOT"
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencies {
+    // Use JUnit Jupiter for testing.
+    testImplementation "org.junit.jupiter:junit-jupiter:5.11.0"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+java {
+    sourceCompatibility = "17"
+    targetCompatibility = "17"
+
+    withJavadocJar()
+    withSourcesJar()
+}
+
+tasks.named("test", Test) {
+    // Use JUnit Platform for unit tests.
+    useJUnitPlatform()
+
+    maxHeapSize = "1G"
+
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams true
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifactId = "fsplib"
+            from components.java
+            pom {
+                name = 'FSP library for java'
+                description = 'Implements FSP protocol'
+                url = 'https://github.com/matthewdruid/fsplib'
+            }
+        }
+    }
+    repositories {
+        mavenLocal()
+    }
+}
+
