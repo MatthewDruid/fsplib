@@ -8,7 +8,7 @@ public class Utils {
     protected static final Charset cs;
 
     static {
-        String encoding = System.getProperty("native.encoding");
+        String encoding = System.getProperty("fsp.encoding");
         cs = (encoding != null) ? Charset.forName(encoding) : Charset.defaultCharset();
     }
 
