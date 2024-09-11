@@ -27,7 +27,7 @@ public class Client implements Closeable {
         return this;
     }
 
-    protected Session session(String host, int port) throws Exception {
+    public Session session(String host, int port) throws Exception {
         InetSocketAddress address = new InetSocketAddress(host, port);
 
         if (sessions.containsKey(address))
