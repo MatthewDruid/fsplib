@@ -1,6 +1,7 @@
 package pl.com.witia.fsp.protocol;
 
-import pl.com.witia.fsp.Utils;
+import java.nio.charset.Charset;
+
 import pl.com.witia.fsp.errors.IncorrectCommandError;
 
 public class Version {
@@ -21,7 +22,7 @@ public class Version {
 
         Version version = new Version();
 
-        version.serverVersion = Utils.butesToString(msg.getData());
+        version.serverVersion = new String(msg.getData(), Charset.forName("windows-1250"));
 
         return version;
     }

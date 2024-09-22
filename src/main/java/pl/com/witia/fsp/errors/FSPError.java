@@ -1,6 +1,7 @@
 package pl.com.witia.fsp.errors;
 
-import pl.com.witia.fsp.Utils;
+import java.nio.charset.Charset;
+
 import pl.com.witia.fsp.protocol.Message;
 
 public class FSPError extends Exception {
@@ -23,7 +24,7 @@ public class FSPError extends Exception {
     public static FSPError from(Message msg) {
         FSPError err = new FSPError();
 
-        err.message = Utils.butesToString(msg.getData());
+        err.message = new String(msg.getData(), Charset.forName("windows-1250"));
 
         if (2 == msg.getHeader().getFilePosition()) {
             byte[] xtra = msg.getXtraData();

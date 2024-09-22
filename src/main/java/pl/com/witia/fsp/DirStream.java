@@ -3,8 +3,9 @@ package pl.com.witia.fsp;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -17,15 +18,8 @@ import pl.com.witia.fsp.protocol.Message;
 
 public class DirStream implements Iterable<DirEntry> {
 
-    protected final Session session;
-    protected final String path;
-    protected final byte[] asciiz;
-
     protected final ReadWriteLock entriesLock = new ReentrantReadWriteLock();
-    protected final LinkedList<DirEntry> entries = new LinkedList<>();
-
-    protected volatile int position = 0;
-    protected volatile boolean lastLoaded = false;
+    protected final List<DirEntry> entries;
 
     private class DirIterator implements Iterator<DirEntry> {
 
@@ -33,28 +27,10 @@ public class DirStream implements Iterable<DirEntry> {
 
         @Override
         public boolean hasNext() {
-            try {
-                entriesLock.readLock().lock();
+            if (index == entries.size())
+                return false;
 
-                if (lastLoaded) {
-                    if (index == entries.size())
-                        return false;
-
-                    return true;
-                }
-
-                if (index >= entries.size() - 2) {
-                    try {
-                        getNext();
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-
-                return true;
-            } finally {
-                entriesLock.readLock().unlock();
-            }
+            return true;
         }
 
         @Override
@@ -71,12 +47,10 @@ public class DirStream implements Iterable<DirEntry> {
         }
     }
 
-    protected DirStream(Session session, String path) throws IncorrectSequenceError, IncorrectCommandError, IOException, InterruptedException, FSPError {
-        this.session = session;
-        this.path = path;
-        this.asciiz = Utils.stringToASCIIZ(path);
-
-        getNext();
+    private DirStream(
+        List<DirEntry> entries
+    ) {
+        this.entries = entries;
     }
 
     @Override
@@ -84,56 +58,52 @@ public class DirStream implements Iterable<DirEntry> {
         return new DirIterator();
     }
 
-    private void process(Message msg) {
-        try {
-            entriesLock.writeLock().lock();
+    protected static boolean process(Message msg, List<DirEntry> entries) {
+        byte[] msg_data = msg.getData();
 
-            byte[] msg_data = msg.getData();
+        ByteBuffer dir_buff = ByteBuffer.wrap(msg_data);
+        dir_buff.order(ByteOrder.BIG_ENDIAN);
 
-            ByteBuffer dir_buff = ByteBuffer.wrap(msg_data);
-            dir_buff.order(ByteOrder.BIG_ENDIAN);
+        while (dir_buff.position() < dir_buff.limit()) {
+            DirEntry entry = new DirEntry();
+            entry.setTime(dir_buff.getInt());
+            entry.setSize(dir_buff.getInt());
+            entry.setType(dir_buff.get());
 
-            while (dir_buff.position() < dir_buff.limit()) {
-                DirEntry entry = new DirEntry();
-                entry.setTime(dir_buff.getInt());
-                entry.setSize(dir_buff.getInt());
-                entry.setType(dir_buff.get());
+            if (entry.getType() == (byte)0x2a) {
+                return true;
+            }
 
-                dir_buff.mark();
-                int name_len = 0;
-                for (byte c = dir_buff.get(); c != 0; c = dir_buff.get())
-                    name_len += 1;
-                dir_buff.reset();
-                byte[] name = new byte[name_len];
-                dir_buff.get(name);
+            if (entry.getType() == (byte)0x00) {
+                break;
+            }
+
+            dir_buff.mark();
+            int name_len = 0;
+            for (byte c = dir_buff.get(); c != 0; c = dir_buff.get())
+                name_len += 1;
+            dir_buff.reset();
+            byte[] name = new byte[name_len];
+            dir_buff.get(name);
+            dir_buff.get();
+
+            entry.setName(Utils.butesToString(name));
+
+            entries.add(entry);
+
+            int len = name_len + 1 + DirEntry.HEAD_LEN;
+            for (int i = (4 - (len % 4)) % 4; i > 0; i -= 1)
                 dir_buff.get();
 
-                entry.setName(Utils.butesToString(name));
-
-                if (entry.getType() == (byte)0x00) {
-                    lastLoaded = true;
-                    break;
-                }
-
-                entries.add(entry);
-
-                int len = name_len + 1 + DirEntry.HEAD_LEN;
-                for (int i = 4 - (len % 4); i < 4 && i > 0; i -= 1)
-                    dir_buff.get();
-
-                if (dir_buff.limit() - dir_buff.position() < DirEntry.HEAD_LEN)
-                    break;
-            }
-        } finally {
-            entriesLock.writeLock().unlock();
+            if (dir_buff.limit() - dir_buff.position() < DirEntry.HEAD_LEN)
+                break;
         }
+
+        return false;
     }
 
-    protected void getNext(
-    ) throws IOException, InterruptedException, FSPError, IncorrectSequenceError, IncorrectCommandError {
-        if (lastLoaded)
-            return;
-
+    protected static Message get(Session session, byte[] data, int position)
+            throws IOException, InterruptedException, FSPError, IncorrectSequenceError, IncorrectCommandError {
         short sequence = (short)((int)Math.random() & 0xffff);
 
         Header hdr = new Header();
@@ -143,7 +113,7 @@ public class DirStream implements Iterable<DirEntry> {
 
         Message msg = new Message();
         msg.setHeader(hdr);
-        msg.setData(asciiz);
+        msg.setData(data);
 
         msg = session.send(session.dest, msg);
         if (sequence != msg.getHeader().getSequence())
@@ -152,12 +122,24 @@ public class DirStream implements Iterable<DirEntry> {
         if (msg.getHeader().getCommand() != Header.CC_GET_DIR)
             throw new IncorrectCommandError(String.format("Expected 0x%02x but is 0x%02x", Header.CC_GET_DIR, msg.getHeader().getCommand()));
 
-        if (lastLoaded)
-            return;
+        return msg;
+    }
 
-        process(msg);
+    protected static DirStream init(
+        Session session,
+        String path
+    ) throws IOException, InterruptedException, FSPError, IncorrectSequenceError, IncorrectCommandError {
+        ArrayList<DirEntry> entries = new ArrayList<>();
+        byte[] asciiz = Utils.stringToASCIIZ(path);
 
-        position += 1;
+        Message msg = null;
+        int position = 0;
+        do {
+            msg = get(session, asciiz, position);
+            position += 1;
+        } while (process(msg, entries));
+
+        return new DirStream(entries);
     }
 
 }

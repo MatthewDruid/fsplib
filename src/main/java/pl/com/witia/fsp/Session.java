@@ -64,7 +64,7 @@ public class Session implements Closeable {
 
     public Future<DirStream> getDirStream(String path) {
         return executor.submit(() -> {
-            return new DirStream(this, path);
+            return DirStream.init(this, path);
         });
     }
 
